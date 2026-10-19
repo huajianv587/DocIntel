@@ -1,0 +1,200 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: docintel
+      POSTGRES_USER: docintel
+      POSTGRES_PASSWORD: docintel
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docintel -d docintel"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.6
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - qdrant-data:/qdrant/storage
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - redis-data:/data
+
+  s3:
+    image: localstack/localstack:3.8.1
+    environment:
+      SERVICES: s3
+      AWS_DEFAULT_REGION: ap-southeast-1
+      PERSISTENCE: "1"
+      DEBUG: "0"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "4566:4566"
+    volumes:
+      - localstack-data:/var/lib/localstack
+
+  s3-init:
+    image: localstack/localstack:3.8.1
+    depends_on:
+      s3:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      AWS_DEFAULT_REGION: ap-southeast-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://s3:4566
+    command: ["awslocal s3 mb s3://docintel || true"]
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      ENVIRONMENT: compose
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      DATABASE_URL: postgresql+psycopg://docintel:docintel@postgres:5432/docintel
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      S3_ENDPOINT_URL: http://s3:4566
+      S3_REGION: ap-southeast-1
+      S3_BUCKET: docintel
+      S3_ACCESS_KEY: test
+      S3_SECRET_KEY: test
+      JWT_SECRET: ${JWT_SECRET:-local-compose-secret-change-this-32-bytes-minimum}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@docintel.io}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-change-me-now}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_MAX_DOCUMENTS: ${GITHUB_MAX_DOCUMENTS:-200}
+      GITHUB_MAX_ISSUES: ${GITHUB_MAX_ISSUES:-100}
+      GITHUB_MAX_COMMENTS: ${GITHUB_MAX_COMMENTS:-100}
+      SANDBOX_EXECUTION_MODE: celery
+      SANDBOX_QUEUE: sandbox
+      SANDBOX_TASK_TIMEOUT_SECONDS: 30
+      CORS_ORIGINS: http://localhost:5173,http://localhost:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      s3-init:
+        condition: service_completed_successfully
+    command: ["/bin/sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      ENVIRONMENT: compose
+      DATABASE_URL: postgresql+psycopg://docintel:docintel@postgres:5432/docintel
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      S3_ENDPOINT_URL: http://s3:4566
+      S3_REGION: ap-southeast-1
+      S3_BUCKET: docintel
+      S3_ACCESS_KEY: test
+      S3_SECRET_KEY: test
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_MAX_DOCUMENTS: ${GITHUB_MAX_DOCUMENTS:-200}
+      GITHUB_MAX_ISSUES: ${GITHUB_MAX_ISSUES:-100}
+      GITHUB_MAX_COMMENTS: ${GITHUB_MAX_COMMENTS:-100}
+    depends_on:
+      api:
+        condition: service_healthy
+    command: ["celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+
+  sandbox-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_DOCKER_CLI: "1"
+    environment:
+      ENVIRONMENT: compose
+      REDIS_URL: redis://redis:6379/0
+      SANDBOX_ENABLED: "true"
+      SANDBOX_EXECUTION_MODE: docker
+      SANDBOX_QUEUE: sandbox
+    user: "0:0"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--queues=sandbox", "--hostname=sandbox@%h"]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "5173:8080"
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      prometheus:
+        condition: service_started
+    ports:
+      - "3001:3000"
+
+volumes:
+  postgres-data:
+  qdrant-data:
+  redis-data:
+  localstack-data:
+  prometheus-data:
+  grafana-data:

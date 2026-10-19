@@ -1,0 +1,119 @@
+name: docintel-staging-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Terraform environment name
+        required: true
+        default: staging
+        type: string
+      apply:
+        description: Apply the reviewed Terraform plan and roll out ECS
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: docintel-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      AWS_REGION: ap-southeast-1
+      ENVIRONMENT: ${{ inputs.environment }}
+      TF_VAR_environment: ${{ inputs.environment }}
+      TF_VAR_project_name: docintel
+      TF_VAR_db_password: ${{ secrets.DOCINTEL_DB_PASSWORD }}
+      TF_VAR_jwt_secret: ${{ secrets.DOCINTEL_JWT_SECRET }}
+      TF_VAR_qdrant_cloud_url: ${{ secrets.QDRANT_CLOUD_URL }}
+      TF_VAR_qdrant_api_key: ${{ secrets.QDRANT_API_KEY }}
+      TF_VAR_deepseek_api_key: ${{ secrets.DEEPSEEK_API_KEY }}
+      # GitHub reserves the GITHUB_* secret namespace for built-in values.
+      TF_VAR_github_token: ${{ secrets.DOCINTEL_GITHUB_TOKEN_READONLY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS through GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: docintel-${{ github.run_id }}
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Initialize Terraform
+        working-directory: infra/terraform
+        run: terraform init -input=false
+
+      - name: Bootstrap ECR repositories
+        working-directory: infra/terraform
+        run: |
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          REGISTRY="$ACCOUNT_ID.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          export TF_VAR_api_image="$REGISTRY/docintel-${ENVIRONMENT}/api:bootstrap"
+          export TF_VAR_worker_image="$REGISTRY/docintel-${ENVIRONMENT}/worker:bootstrap"
+          export TF_VAR_frontend_image="$REGISTRY/docintel-${ENVIRONMENT}/frontend:bootstrap"
+          export TF_VAR_db_password="${TF_VAR_db_password:-bootstrap-only-placeholder}"
+          export TF_VAR_jwt_secret="${TF_VAR_jwt_secret:-bootstrap-only-placeholder-change-me}"
+          export TF_VAR_qdrant_cloud_url="${TF_VAR_qdrant_cloud_url:-https://bootstrap.invalid}"
+          terraform apply -input=false -auto-approve \
+            -target=aws_ecr_repository.api \
+            -target=aws_ecr_repository.worker \
+            -target=aws_ecr_repository.frontend
+
+      - name: Log in to ECR
+        run: |
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          REGISTRY="$ACCOUNT_ID.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$REGISTRY"
+          echo "REGISTRY=$REGISTRY" >> "$GITHUB_ENV"
+
+      - name: Build and push immutable images
+        working-directory: .
+        env:
+          TAG: ${{ github.sha }}
+        run: |
+          docker build -t "$REGISTRY/docintel-${ENVIRONMENT}/api:$TAG" .
+          docker build -t "$REGISTRY/docintel-${ENVIRONMENT}/worker:$TAG" .
+          docker build -t "$REGISTRY/docintel-${ENVIRONMENT}/frontend:$TAG" -f frontend/Dockerfile .
+          docker push "$REGISTRY/docintel-${ENVIRONMENT}/api:$TAG"
+          docker push "$REGISTRY/docintel-${ENVIRONMENT}/worker:$TAG"
+          docker push "$REGISTRY/docintel-${ENVIRONMENT}/frontend:$TAG"
+          echo "TF_VAR_api_image=$REGISTRY/docintel-${ENVIRONMENT}/api:$TAG" >> "$GITHUB_ENV"
+          echo "TF_VAR_worker_image=$REGISTRY/docintel-${ENVIRONMENT}/worker:$TAG" >> "$GITHUB_ENV"
+          echo "TF_VAR_frontend_image=$REGISTRY/docintel-${ENVIRONMENT}/frontend:$TAG" >> "$GITHUB_ENV"
+
+      - name: Generate Terraform plan
+        working-directory: infra/terraform
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Publish Terraform plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: docintel-${{ inputs.environment }}-terraform-plan
+          path: infra/terraform/tfplan
+
+      - name: Apply reviewed Terraform plan
+        if: ${{ inputs.apply == true }}
+        working-directory: infra/terraform
+        run: terraform apply -input=false tfplan
+
+      - name: Wait for ECS rollout
+        if: ${{ inputs.apply == true }}
+        run: |
+          aws ecs wait services-stable --cluster "docintel-${ENVIRONMENT}" --services api worker frontend
+          aws ecs describe-services --cluster "docintel-${ENVIRONMENT}" --services api worker frontend \
+            --query 'services[].{service:serviceName,running:runningCount,desired:desiredCount,status:status}' \
+            --output table

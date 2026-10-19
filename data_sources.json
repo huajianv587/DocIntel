@@ -1,0 +1,17 @@
+{
+  "reference_only": {
+    "id": "esg_paper_reference",
+    "root_env": "ESG_REFERENCE_ROOT",
+    "default_root": "/Users/guohuiwen/华健/论文 esg",
+    "manifest": "revision/online_resource_1_v110_staged/metadata/source_report_manifest_v2.csv",
+    "page_index": "revision/online_resource_1_v110_staged/metadata/page_index.jsonl",
+    "status": "reference_only",
+    "policy": "Do not copy unreleased PDFs, synthetic metrics, or publication-gated artifacts into the product index. Ingest only files explicitly approved for this project."
+  },
+  "tech_support": {
+    "id": "open_source_support",
+    "status": "bring_your_own_corpus",
+    "examples": ["fastapi/fastapi", "django/django", "kubernetes/website"],
+    "policy": "Use the repository's public documentation and issue/discussion exports, preserving URL, repository, issue number and retrieval timestamp."
+  }
+}

@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docintel"
+version = "0.1.0"
+description = "Auditable long-document RAG and developer support agent platform"
+requires-python = ">=3.11"
+dependencies = [
+  "alembic>=1.14",
+  "argon2-cffi>=23.1",
+  "boto3>=1.35",
+  "celery[redis]>=5.4",
+  "email-validator>=2.2",
+  "fastapi>=0.115",
+  "httpx>=0.27",
+  "openai>=1.55",
+  "opentelemetry-api>=1.27",
+  "opentelemetry-sdk>=1.27",
+  "opentelemetry-exporter-otlp-proto-http>=1.27",
+  "prometheus-client>=0.21",
+  "psycopg[binary]>=3.2",
+  "pydantic-settings>=2.6",
+  "PyJWT>=2.10",
+  "qdrant-client>=1.12,<1.13",
+  "sqlalchemy>=2.0",
+  "sse-starlette>=2.1",
+  "uvicorn[standard]>=0.30",
+]
+
+[project.optional-dependencies]
+pdf = ["pypdf>=5.0", "docling>=2.0"]
+embeddings = ["fastembed>=0.4"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "playwright>=1.48", "locust>=2.32"]
+
+[project.scripts]
+docintel = "docintel.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["app*", "docintel*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

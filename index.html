@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DocIntel</title>
+  <style>
+    :root { color-scheme: light; --ink:#18212b; --muted:#66717d; --line:#d8dee5; --panel:#ffffff; --bg:#f4f6f8; --accent:#0d6b61; --warn:#9b4d16; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif; }
+    header { border-bottom:1px solid var(--line); background:var(--panel); }
+    .bar, main { max-width:1100px; margin:0 auto; padding:22px 24px; }
+    .bar { display:flex; align-items:center; justify-content:space-between; gap:20px; }
+    .brand { display:flex; align-items:baseline; gap:12px; }
+    .brand h1 { margin:0; font-size:22px; letter-spacing:0; }
+    .brand span { color:var(--muted); font-size:13px; }
+    .status { color:var(--muted); font-size:13px; }
+    .layout { display:grid; grid-template-columns:minmax(0, 1fr) 320px; gap:20px; align-items:start; }
+    section { background:var(--panel); border:1px solid var(--line); border-radius:6px; }
+    .query { padding:20px; }
+    label { display:block; font-weight:650; margin-bottom:8px; }
+    textarea { width:100%; min-height:130px; resize:vertical; border:1px solid var(--line); border-radius:4px; padding:12px; font:inherit; color:inherit; background:#fff; }
+    .controls { display:flex; align-items:center; gap:10px; margin-top:12px; }
+    select, input { border:1px solid var(--line); border-radius:4px; padding:9px 10px; background:#fff; color:inherit; }
+    button { border:1px solid var(--accent); border-radius:4px; padding:9px 14px; background:var(--accent); color:#fff; font-weight:650; cursor:pointer; }
+    button:disabled { opacity:.55; cursor:wait; }
+    .answer { margin-top:18px; padding-top:18px; border-top:1px solid var(--line); min-height:140px; white-space:pre-wrap; }
+    .answer.empty { color:var(--muted); }
+    .answer.abstain { color:var(--warn); }
+    .side { padding:18px; }
+    .side h2 { font-size:14px; margin:0 0 12px; }
+    .metric { display:flex; justify-content:space-between; gap:12px; border-top:1px solid var(--line); padding:10px 0; }
+    .metric:first-of-type { border-top:0; }
+    .metric span:first-child { color:var(--muted); }
+    .citations { margin-top:16px; }
+    .citation { border-top:1px solid var(--line); padding:10px 0; font-size:13px; }
+    .citation code { color:var(--accent); word-break:break-word; }
+    .trace { margin-top:16px; color:var(--muted); font-size:12px; }
+    @media (max-width: 800px) { .layout { grid-template-columns:1fr; } .bar, main { padding:16px; } }
+  </style>
+</head>
+<body>
+  <header><div class="bar"><div class="brand"><h1>DocIntel</h1><span>auditable document support</span></div><div id="status" class="status">connecting</div></div></header>
+  <main>
+    <div class="layout">
+      <section class="query">
+        <label for="question">Question</label>
+        <textarea id="question" placeholder="Ask about the indexed documents or a resolved support issue"></textarea>
+        <div class="controls">
+          <label for="topk" style="margin:0;color:var(--muted);font-weight:500">Evidence</label>
+          <select id="topk"><option>3</option><option selected>5</option><option>8</option></select>
+          <button id="ask">Query</button>
+        </div>
+        <div id="answer" class="answer empty">The answer will appear here with page, issue, or document citations.</div>
+        <div id="citations" class="citations"></div>
+        <div id="trace" class="trace"></div>
+      </section>
+      <section class="side">
+        <h2>Runtime</h2>
+        <div class="metric"><span>Domain</span><strong id="domain">-</strong></div>
+        <div class="metric"><span>Indexed chunks</span><strong id="chunks">-</strong></div>
+        <div class="metric"><span>Evidence mode</span><strong id="mode">-</strong></div>
+        <div class="metric"><span>Trust boundary</span><strong>citations + abstention</strong></div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    async function health() {
+      try {
+        const data = await fetch('/health').then((r) => r.json());
+        $('status').textContent = data.status === 'ok' ? 'ready' : 'degraded';
+        $('domain').textContent = data.domain;
+        $('chunks').textContent = data.indexed_chunks;
+        $('mode').textContent = data.evidence_mode;
+      } catch (error) { $('status').textContent = 'offline'; }
+    }
+    async function ask() {
+      const query = $('question').value.trim();
+      if (!query) return;
+      $('ask').disabled = true;
+      $('answer').className = 'answer';
+      $('answer').textContent = 'Retrieving evidence...';
+      $('citations').replaceChildren(); $('trace').textContent = '';
+      try {
+        const response = await fetch('/query', { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ query, top_k:Number($('topk').value) }) }).then((r) => r.json());
+        $('answer').className = response.abstained ? 'answer abstain' : 'answer';
+        $('answer').textContent = response.answer;
+        response.citations.forEach((citation) => {
+          const row = document.createElement('div'); row.className = 'citation';
+          const page = citation.page ? `, p.${citation.page}` : '';
+          row.innerHTML = `<strong>${citation.source_type}</strong>${page}<br><code>${citation.source_id}</code>`;
+          $('citations').append(row);
+        });
+        $('trace').textContent = `route=${response.route} confidence=${response.confidence} latency=${response.latency_seconds}s trace=${response.trace_id}`;
+      } catch (error) { $('answer').className = 'answer abstain'; $('answer').textContent = String(error); }
+      finally { $('ask').disabled = false; }
+    }
+    $('ask').addEventListener('click', ask);
+    $('question').addEventListener('keydown', (event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') ask(); });
+    health();
+  </script>
+</body>
+</html>

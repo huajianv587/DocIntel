@@ -1,0 +1,12 @@
+{
+  "id": "esg",
+  "name": "ESG reports",
+  "description": "Long-form sustainability, climate and governance reports with page-level evidence.",
+  "document_extensions": [".md", ".txt", ".pdf", ".jsonl"],
+  "issue_extensions": [],
+  "routing_keywords": ["emission", "carbon", "scope", "board", "sustainability", "target", "policy", "report"],
+  "answer_style": "State the answer only when the indexed evidence supports it. Preserve units, periods and scope.",
+  "required_citation_fields": ["source_id", "page"],
+  "abstention_threshold": 0.18,
+  "metadata_fields": ["company", "report_year", "source_type", "page"]
+}

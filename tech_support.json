@@ -1,0 +1,12 @@
+{
+  "id": "tech_support",
+  "name": "Developer technical support",
+  "description": "Open-source technical documentation and resolved issues for support answers.",
+  "document_extensions": [".md", ".txt", ".pdf", ".jsonl"],
+  "issue_extensions": [".jsonl"],
+  "routing_keywords": ["error", "exception", "bug", "issue", "not working", "traceback", "configuration", "how do i"],
+  "answer_style": "Give a concise diagnostic answer, cite the supporting document or resolved issue, and escalate when evidence is insufficient.",
+  "required_citation_fields": ["source_id", "source_type"],
+  "abstention_threshold": 0.12,
+  "metadata_fields": ["repository", "issue_id", "state", "source_type"]
+}

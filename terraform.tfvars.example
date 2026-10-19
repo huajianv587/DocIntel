@@ -1,0 +1,6 @@
+api_image       = "000000000000.dkr.ecr.ap-southeast-1.amazonaws.com/docintel-staging/api:replace"
+worker_image    = "000000000000.dkr.ecr.ap-southeast-1.amazonaws.com/docintel-staging/worker:replace"
+frontend_image  = "000000000000.dkr.ecr.ap-southeast-1.amazonaws.com/docintel-staging/frontend:replace"
+qdrant_cloud_url = "https://YOUR-QDRANT-CLOUD-ENDPOINT"
+db_password     = "replace-me"
+jwt_secret      = "replace-with-a-long-random-secret"

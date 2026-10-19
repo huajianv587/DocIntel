@@ -1,0 +1,3 @@
+{"case_id":"tech-001","query":"Why does the streaming response close before the body is complete?","expected_source_id":"issue-1001","expected_answer_contains":["heartbeat","timeout"],"should_abstain":false}
+{"case_id":"tech-002","query":"How do I make a rebuilt index visible to the service?","expected_source_id":"issue-1002","expected_answer_contains":["rebuild","DOCINTEL_INDEX_PATH"],"should_abstain":false}
+{"case_id":"tech-003","query":"What is the exact retention period for customer backups?","expected_source_id":"missing-policy","expected_answer_contains":[],"should_abstain":true}
